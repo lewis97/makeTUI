@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"regexp"
+	"sort"
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -19,11 +20,12 @@ type target struct {
 
 type model struct {
 	targets  []target
+	filtered []target
 	cursor   int
+	query    string
 	width    int
 	height   int
 	err      error
-	running  bool
 }
 
 var (
@@ -55,6 +57,10 @@ var (
 			Border(lipgloss.RoundedBorder()).
 			BorderForeground(lipgloss.Color("8")).
 			Padding(0, 1)
+
+	searchStyle = lipgloss.NewStyle().
+			Foreground(lipgloss.Color("15")).
+			Bold(true)
 )
 
 func main() {
@@ -69,8 +75,13 @@ func main() {
 		os.Exit(1)
 	}
 
+	m := model{
+		targets:  targets,
+		filtered: targets,
+	}
+
 	p := tea.NewProgram(
-		model{targets: targets},
+		m,
 		tea.WithAltScreen(),
 	)
 
@@ -88,21 +99,44 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
 		switch msg.String() {
-		case "ctrl+c", "q", "esc":
+		case "ctrl+c", "esc":
 			return m, tea.Quit
 
-		case "up", "k":
+		case "ctrl+j":
+			if len(m.filtered) > 0 && m.cursor < len(m.filtered)-1 {
+				m.cursor++
+			}
+
+		case "ctrl+k":
 			if m.cursor > 0 {
 				m.cursor--
 			}
 
-		case "down", "j":
-			if m.cursor < len(m.targets)-1 {
-				m.cursor++
+		case "enter":
+			if len(m.filtered) == 0 {
+				return m, nil
 			}
 
-		case "enter":
-			return m, runTarget(m.targets[m.cursor].name)
+			return m, runTarget(m.filtered[m.cursor].name)
+
+		case "backspace":
+			if len(m.query) > 0 {
+				// Remove the last rune rather than the last byte.
+				runes := []rune(m.query)
+				m.query = string(runes[:len(runes)-1])
+				m.applyFilter()
+			}
+
+		case "ctrl+u":
+			m.query = ""
+			m.applyFilter()
+
+		default:
+			// Anything printable is treated as search input.
+			if msg.Type == tea.KeyRunes {
+				m.query += string(msg.Runes)
+				m.applyFilter()
+			}
 		}
 
 	case tea.WindowSizeMsg:
@@ -112,11 +146,18 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case commandFinishedMsg:
 		if msg.err != nil {
 			m.err = msg.err
+			return m, nil
 		}
+
 		return m, tea.Quit
 	}
 
 	return m, nil
+}
+
+func (m *model) applyFilter() {
+	m.filtered = fuzzyFilter(m.targets, m.query)
+	m.cursor = 0
 }
 
 type commandFinishedMsg struct {
@@ -127,8 +168,6 @@ func runTarget(name string) tea.Cmd {
 	return func() tea.Msg {
 		cmd := exec.Command("make", name)
 
-		// Restore the normal terminal temporarily so the command can
-		// behave like a normal interactive command.
 		cmd.Stdin = os.Stdin
 		cmd.Stdout = os.Stdout
 		cmd.Stderr = os.Stderr
@@ -147,76 +186,110 @@ func (m model) View() string {
 	var b strings.Builder
 
 	// Header.
-	header := titleStyle.Render(" MAKE ")
-	b.WriteString(header)
+	b.WriteString(titleStyle.Render(" MAKE "))
 	b.WriteString(" ")
 	b.WriteString(dimStyle.Render("targets"))
 	b.WriteString("\n\n")
 
+	// Search input.
+	b.WriteString(searchStyle.Render("/ "))
+	b.WriteString(m.query)
+
+	if m.query == "" {
+		b.WriteString(dimStyle.Render("type to search..."))
+	}
+
+	b.WriteString("\n\n")
+
 	// Target list.
-	listHeight := m.height - 8
+	listHeight := m.height - 11
 	if listHeight < 3 {
 		listHeight = 3
 	}
 
-	start := 0
-	end := len(m.targets)
-
-	if len(m.targets) > listHeight {
-		start = m.cursor - listHeight/2
-
-		if start < 0 {
-			start = 0
-		}
-
-		end = start + listHeight
-
-		if end > len(m.targets) {
-			end = len(m.targets)
-			start = end - listHeight
-		}
-	}
-
-	for i := start; i < end; i++ {
-		t := m.targets[i]
-
-		line := "  " + t.name
-
-		if i == m.cursor {
-			line = "▶ " + t.name
-			b.WriteString(selectedStyle.Render(padRight(line, m.width-4)))
-		} else {
-			b.WriteString(normalStyle.Render(line))
-		}
-
+	if len(m.filtered) == 0 {
+		b.WriteString(dimStyle.Render("  No matching targets"))
 		b.WriteString("\n")
+	} else {
+		start := 0
+		end := len(m.filtered)
+
+		if len(m.filtered) > listHeight {
+			start = m.cursor - listHeight/2
+
+			if start < 0 {
+				start = 0
+			}
+
+			end = start + listHeight
+
+			if end > len(m.filtered) {
+				end = len(m.filtered)
+				start = end - listHeight
+			}
+		}
+
+		for i := start; i < end; i++ {
+			t := m.filtered[i]
+
+			line := "  " + t.name
+
+			if i == m.cursor {
+				line = "▶ " + t.name
+
+				b.WriteString(
+					selectedStyle.Render(
+						padRight(line, m.width-4),
+					),
+				)
+			} else {
+				b.WriteString(normalStyle.Render(line))
+			}
+
+			b.WriteString("\n")
+		}
 	}
 
 	// Description box.
-	var description string
-
-	if m.targets[m.cursor].desc != "" {
-		description = m.targets[m.cursor].desc
-	} else {
-		description = dimStyle.Render("No description available.")
-	}
-
-	descWidth := m.width - 4
-	if descWidth < 20 {
-		descWidth = 20
-	}
-
-	desc := descTitleStyle.Render(m.targets[m.cursor].name) +
-		"\n" +
-		descStyle.Render(description)
-
 	b.WriteString("\n")
-	b.WriteString(borderStyle.Width(descWidth).Render(desc))
+
+	if len(m.filtered) > 0 {
+		selected := m.filtered[m.cursor]
+
+		description := selected.desc
+		if description == "" {
+			description = dimStyle.Render("No description available.")
+		}
+
+		descWidth := m.width - 4
+		if descWidth < 20 {
+			descWidth = 20
+		}
+
+		desc := descTitleStyle.Render(selected.name) +
+			"\n" +
+			descStyle.Render(description)
+
+		b.WriteString(
+			borderStyle.
+				Width(descWidth).
+				Render(desc),
+		)
+	} else {
+		b.WriteString(
+			borderStyle.
+				Width(max(20, m.width-4)).
+				Render(dimStyle.Render("No matching target")),
+		)
+	}
+
 	b.WriteString("\n\n")
 
 	// Footer.
 	b.WriteString(
-		dimStyle.Render("↑/k up   ↓/j down   enter run   q/esc quit"),
+		dimStyle.Render(
+			"ctrl+k/ctrl+j navigate   type search   ctrl+u clear   enter run   esc quit",
+		),
 	)
 
 	if m.err != nil {
@@ -239,6 +312,132 @@ func padRight(s string, width int) string {
 	return s + strings.Repeat(" ", width-len(s))
 }
 
+func max(a, b int) int {
+	if a > b {
+		return a
+	}
+	return b
+}
+
+// fuzzyFilter performs a lightweight fuzzy match.
+//
+// Characters from the query must occur in order in the target name,
+// but don't need to be consecutive.
+//
+// For example:
+//
+//	query "bt" matches "build-test"
+//	query "ga" matches "generate-assets"
+//	query "cl" matches "clean"
+//
+// Results are scored so tighter matches and matches near the beginning
+// of the target are preferred.
+func fuzzyFilter(targets []target, query string) []target {
+	query = strings.ToLower(strings.TrimSpace(query))
+
+	if query == "" {
+		return targets
+	}
+
+	type result struct {
+		target target
+		score  int
+	}
+
+	var results []result
+
+	for _, t := range targets {
+		score, ok := fuzzyScore(strings.ToLower(t.name), query)
+
+		if ok {
+			results = append(results, result{
+				target: t,
+				score:  score,
+			})
+		}
+	}
+
+	sort.SliceStable(results, func(i, j int) bool {
+		return results[i].score > results[j].score
+	})
+
+	filtered := make([]target, 0, len(results))
+
+	for _, r := range results {
+		filtered = append(filtered, r.target)
+	}
+
+	return filtered
+}
+
+func fuzzyScore(text, query string) (int, bool) {
+	if query == "" {
+		return 0, true
+	}
+
+	textRunes := []rune(text)
+	queryRunes := []rune(query)
+
+	queryIndex := 0
+	score := 0
+
+	lastMatch := -1
+
+	for i, r := range textRunes {
+		if queryIndex >= len(queryRunes) {
+			break
+		}
+
+		if r != queryRunes[queryIndex] {
+			continue
+		}
+
+		// Reward matches near the beginning.
+		score += 10
+
+		if i == 0 {
+			score += 20
+		}
+
+		// Reward consecutive characters.
+		if lastMatch == i-1 {
+			score += 15
+		}
+
+		// Reward matches after separators.
+		if i > 0 {
+			switch textRunes[i-1] {
+			case '-', '_', '/', '.', ' ':
+				score += 12
+			}
+		}
+
+		// Penalize gaps between matches.
+		if lastMatch >= 0 {
+			score -= i - lastMatch - 1
+		}
+
+		lastMatch = i
+		queryIndex++
+	}
+
+	if queryIndex != len(queryRunes) {
+		return 0, false
+	}
+
+	// Exact match is strongly preferred.
+	if text == query {
+		score += 1000
+	}
+
+	// Prefix match is preferred.
+	if strings.HasPrefix(text, query) {
+		score += 100
+	}
+
+	return score, true
+}
+
 // parseMakefile extracts targets and their preceding ## comments.
 //
 // Example:
@@ -252,7 +451,6 @@ func padRight(s string, width int) string {
 //	    go test ./...
 //
 // Only targets with a normal Makefile target declaration are included.
-// Internal/private targets beginning with "." are ignored.
 func parseMakefile(filename string) ([]target, error) {
 	f, err := os.Open(filename)
 	if err != nil {
@@ -260,8 +458,6 @@ func parseMakefile(filename string) ([]target, error) {
 	}
 	defer f.Close()
 
-	// Match common Makefile targets while avoiding assignments and
-	// indented recipe lines.
 	targetRe := regexp.MustCompile(`^([A-Za-z0-9_./-]+)\s*:(?:[^=]|$)`)
 
 	var targets []target
@@ -271,12 +467,13 @@ func parseMakefile(filename string) ([]target, error) {
 
 	for scanner.Scan() {
 		line := scanner.Text()
-
 		trimmed := strings.TrimSpace(line)
 
-		// Capture comments immediately preceding a target.
+		// Documentation comment.
 		if strings.HasPrefix(trimmed, "##") {
-			pendingDesc = strings.TrimSpace(strings.TrimPrefix(trimmed, "##"))
+			pendingDesc = strings.TrimSpace(
+				strings.TrimPrefix(trimmed, "##"),
+			)
 			continue
 		}
 
@@ -285,8 +482,8 @@ func parseMakefile(filename string) ([]target, error) {
 			continue
 		}
 
-		// Recipe/indented lines cannot be targets.
-		if len(line) > 0 && (line[0] == '\t' || line[0] == ' ') {
+		// Ignore recipe lines.
+		if line[0] == '\t' || line[0] == ' ' {
 			continue
 		}
 
@@ -318,4 +515,3 @@ func parseMakefile(filename string) ([]target, error) {
 
 	return targets, nil
 }
-
