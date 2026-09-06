@@ -17,7 +17,7 @@ Build the executable:
 make build
 ```
 
-Then run it from a directory containing a `Makefile` and `.maketui.json`:
+Then run it from a directory containing a `Makefile`:
 
 ```sh
 ./dist/maketui
@@ -60,8 +60,8 @@ are omitted.
 
 ## Custom commands
 
-Add a `.maketui.json` file alongside the `Makefile` to include commands that
-are not Make targets:
+Optionally add a `.maketui.json` file alongside the `Makefile` to include
+commands that are not Make targets:
 
 ```json
 {

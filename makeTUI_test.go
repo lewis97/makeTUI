@@ -70,6 +70,26 @@ func TestParseJSONfile(t *testing.T) {
 	}
 }
 
+func TestParseJSONfileAllowsMissingConfig(t *testing.T) {
+	dir := t.TempDir()
+	workingDir, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chdir(dir); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chdir(workingDir) })
+
+	targets, err := parseJSONfile()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(targets) != 0 {
+		t.Errorf("got %d targets, want none", len(targets))
+	}
+}
+
 func TestCommandForTarget(t *testing.T) {
 	tests := []struct {
 		name   string

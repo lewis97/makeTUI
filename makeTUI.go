@@ -3,6 +3,7 @@ package main
 import (
 	"bufio"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -576,6 +577,10 @@ func parseJSONfile() ([]target, error) {
 
 	data, err := os.ReadFile(jsonConfigFileName)
 	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return nil, nil
+		}
+
 		return nil, err
 	}
 
