@@ -111,12 +111,12 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "ctrl+c", "esc":
 			return m, tea.Quit
 
-		case "ctrl+j":
+		case "down":
 			if len(m.filtered) > 0 && m.cursor < len(m.filtered)-1 {
 				m.cursor++
 			}
 
-		case "ctrl+k":
+		case "up":
 			if m.cursor > 0 {
 				m.cursor--
 			}
@@ -283,7 +283,7 @@ func (m model) View() string {
 	// Footer.
 	b.WriteString(
 		dimStyle.Render(
-			"ctrl+k/ctrl+j navigate   type search   ctrl+u clear   enter run   esc quit",
+			"↑/↓ navigate   type search   ctrl+u clear   enter run   esc quit",
 		),
 	)
 
