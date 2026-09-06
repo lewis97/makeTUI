@@ -2,6 +2,7 @@ package main
 
 import (
 	"bufio"
+	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
@@ -13,10 +14,20 @@ import (
 	"github.com/charmbracelet/lipgloss"
 )
 
+const jsonConfigFileName = ".maketui.json"
+
+type targetType string
+
+const (
+	makeTarget   targetType = "make"
+	customTarget targetType = "custom"
+)
+
 type target struct {
 	name   string
 	desc   string
 	recipe string
+	ttype  targetType
 }
 
 type model struct {
@@ -26,7 +37,7 @@ type model struct {
 	query    string
 	width    int
 	height   int
-	selected string
+	selected *target
 }
 
 var (
@@ -71,6 +82,14 @@ func main() {
 		os.Exit(1)
 	}
 
+	customTargets, err := parseJSONfile()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "make-tui: %v\n", err)
+		os.Exit(1)
+	}
+
+	targets = append(targets, customTargets...)
+
 	if len(targets) == 0 {
 		fmt.Fprintln(os.Stderr, "make-tui: no targets found in Makefile")
 		os.Exit(1)
@@ -92,9 +111,9 @@ func main() {
 		os.Exit(1)
 	}
 
-	// The TUI must be fully restored before handing terminal control to make.
-	if final, ok := finalModel.(model); ok && final.selected != "" {
-		if err := runTarget(final.selected); err != nil {
+	// The TUI must be fully restored before handing terminal control to the command.
+	if final, ok := finalModel.(model); ok && final.selected != nil {
+		if err := runTarget(*final.selected); err != nil {
 			fmt.Fprintf(os.Stderr, "make-tui: %v\n", err)
 			os.Exit(1)
 		}
@@ -127,7 +146,8 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, nil
 			}
 
-			m.selected = m.filtered[m.cursor].name
+			selected := m.filtered[m.cursor]
+			m.selected = &selected
 			return m, tea.Quit
 
 		case "backspace":
@@ -164,14 +184,32 @@ func (m *model) applyFilter() {
 	m.cursor = 0
 }
 
-func runTarget(name string) error {
-	cmd := exec.Command("make", name)
+func runTarget(target target) error {
+	cmd, err := commandForTarget(target)
+	if err != nil {
+		return err
+	}
 
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 
 	return cmd.Run()
+}
+
+func commandForTarget(target target) (*exec.Cmd, error) {
+	switch target.ttype {
+	case makeTarget:
+		return exec.Command("make", target.name), nil
+	case customTarget:
+		if strings.TrimSpace(target.recipe) == "" {
+			return nil, fmt.Errorf("custom command %q has no code", target.name)
+		}
+
+		return exec.Command("sh", "-c", target.recipe), nil
+	default:
+		return nil, fmt.Errorf("target %q has unknown type %q", target.name, target.ttype)
+	}
 }
 
 func (m model) View() string {
@@ -509,8 +547,9 @@ func parseMakefile(filename string) ([]target, error) {
 		}
 
 		targets = append(targets, target{
-			name: name,
-			desc: pendingDesc,
+			name:  name,
+			desc:  pendingDesc,
+			ttype: makeTarget,
 		})
 		current = &targets[len(targets)-1]
 
@@ -519,6 +558,40 @@ func parseMakefile(filename string) ([]target, error) {
 
 	if err := scanner.Err(); err != nil {
 		return nil, err
+	}
+
+	return targets, nil
+}
+
+func parseJSONfile() ([]target, error) {
+	type command struct {
+		Name        string `json:"name"`
+		Description string `json:"description"`
+		Code        string `json:"code"`
+	}
+
+	type cfgJSON struct {
+		Commands []command `json:"commands"`
+	}
+
+	data, err := os.ReadFile(jsonConfigFileName)
+	if err != nil {
+		return nil, err
+	}
+
+	var config cfgJSON
+	if err := json.Unmarshal(data, &config); err != nil {
+		return nil, fmt.Errorf("parse %s: %w", jsonConfigFileName, err)
+	}
+
+	targets := make([]target, 0, len(config.Commands))
+	for _, command := range config.Commands {
+		targets = append(targets, target{
+			name:   command.Name,
+			desc:   command.Description,
+			recipe: command.Code,
+			ttype:  customTarget,
+		})
 	}
 
 	return targets, nil

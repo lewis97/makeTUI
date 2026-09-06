@@ -1,0 +1,9 @@
+{
+    "commands": [
+        {
+            "name": "test echo",
+            "description": "Print a test message",
+            "code": "echo \"test echo\""
+        }
+    ]
+}

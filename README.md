@@ -1,8 +1,8 @@
 # makeTUI
 
-`makeTUI` is a terminal picker for Makefile targets. It lets you search the
-available targets, inspect their description or recipe, and run one without
-leaving the terminal.
+`makeTUI` is a terminal picker for Makefile targets and custom shell commands.
+It lets you search the available commands, inspect their description or code,
+and run one without leaving the terminal.
 
 ## Requirements
 
@@ -17,14 +17,14 @@ Build the executable:
 make build
 ```
 
-Then run it from a directory containing a `Makefile`:
+Then run it from a directory containing a `Makefile` and `.maketui.json`:
 
 ```sh
 ./dist/maketui
 ```
 
-The program exits before it runs the selected `make <target>` command, so the
-command output appears in your regular terminal.
+The program exits before it runs the selected command, so its output appears in
+your regular terminal.
 
 ## Controls
 
@@ -57,3 +57,29 @@ test:
 
 Only ordinary target declarations are shown; special targets such as `.PHONY`
 are omitted.
+
+## Custom commands
+
+Add a `.maketui.json` file alongside the `Makefile` to include commands that
+are not Make targets:
+
+```json
+{
+  "commands": [
+    {
+      "name": "test echo",
+      "description": "Print a test message",
+      "code": "echo \"test echo\""
+    }
+  ]
+}
+```
+
+Each entry requires a display `name` and the shell `code` to run. The optional
+`description` is shown in the detail panel; when it is omitted, the `code` is
+shown instead.
+
+Makefile targets run as `make <target>`. Custom commands run exactly from their
+`code` field using `sh -c`, so shell features such as pipes and variable
+expansion are supported. Keep this file trusted, since its commands are
+executed with your user account.
