@@ -14,8 +14,9 @@ import (
 )
 
 type target struct {
-	name string
-	desc string
+	name   string
+	desc   string
+	recipe string
 }
 
 type model struct {
@@ -253,7 +254,11 @@ func (m model) View() string {
 
 		description := selected.desc
 		if description == "" {
-			description = dimStyle.Render("No description available.")
+			description = selected.recipe
+		}
+
+		if description == "" {
+			description = dimStyle.Render("No recipe defined.")
 		}
 
 		descWidth := m.width - 4
@@ -424,7 +429,7 @@ func fuzzyScore(text, query string) (int, bool) {
 	return score, true
 }
 
-// parseMakefile extracts targets and their preceding ## comments.
+// parseMakefile extracts targets, their preceding ## comments, and recipes.
 //
 // Example:
 //
@@ -448,6 +453,7 @@ func parseMakefile(filename string) ([]target, error) {
 
 	var targets []target
 	var pendingDesc string
+	var current *target
 
 	scanner := bufio.NewScanner(f)
 
@@ -460,22 +466,36 @@ func parseMakefile(filename string) ([]target, error) {
 			pendingDesc = strings.TrimSpace(
 				strings.TrimPrefix(trimmed, "##"),
 			)
+			current = nil
 			continue
 		}
 
-		// Ignore blank lines while retaining a pending description.
+		// Recipe lines belong to the most recently declared target. Strip the
+		// leading tab so the detail panel shows the shell code clearly.
+		if strings.HasPrefix(line, "\t") {
+			if current != nil {
+				if current.recipe != "" {
+					current.recipe += "\n"
+				}
+				current.recipe += strings.TrimPrefix(line, "\t")
+			}
+			continue
+		}
+
+		// Ignore blank lines while retaining a pending description and target.
 		if trimmed == "" {
 			continue
 		}
 
-		// Ignore recipe lines.
-		if line[0] == '\t' || line[0] == ' ' {
+		// Ignore non-recipe indented lines.
+		if line[0] == ' ' {
 			continue
 		}
 
 		match := targetRe.FindStringSubmatch(line)
 		if match == nil {
 			pendingDesc = ""
+			current = nil
 			continue
 		}
 
@@ -484,6 +504,7 @@ func parseMakefile(filename string) ([]target, error) {
 		// Ignore special/internal targets.
 		if strings.HasPrefix(name, ".") {
 			pendingDesc = ""
+			current = nil
 			continue
 		}
 
@@ -491,6 +512,7 @@ func parseMakefile(filename string) ([]target, error) {
 			name: name,
 			desc: pendingDesc,
 		})
+		current = &targets[len(targets)-1]
 
 		pendingDesc = ""
 	}
