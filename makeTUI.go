@@ -25,7 +25,7 @@ type model struct {
 	query    string
 	width    int
 	height   int
-	err      error
+	selected string
 }
 
 var (
@@ -85,9 +85,18 @@ func main() {
 		tea.WithAltScreen(),
 	)
 
-	if _, err := p.Run(); err != nil {
+	finalModel, err := p.Run()
+	if err != nil {
 		fmt.Fprintf(os.Stderr, "make-tui: %v\n", err)
 		os.Exit(1)
+	}
+
+	// The TUI must be fully restored before handing terminal control to make.
+	if final, ok := finalModel.(model); ok && final.selected != "" {
+		if err := runTarget(final.selected); err != nil {
+			fmt.Fprintf(os.Stderr, "make-tui: %v\n", err)
+			os.Exit(1)
+		}
 	}
 }
 
@@ -117,7 +126,8 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, nil
 			}
 
-			return m, runTarget(m.filtered[m.cursor].name)
+			m.selected = m.filtered[m.cursor].name
+			return m, tea.Quit
 
 		case "backspace":
 			if len(m.query) > 0 {
@@ -143,13 +153,6 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.width = msg.Width
 		m.height = msg.Height
 
-	case commandFinishedMsg:
-		if msg.err != nil {
-			m.err = msg.err
-			return m, nil
-		}
-
-		return m, tea.Quit
 	}
 
 	return m, nil
@@ -160,22 +163,14 @@ func (m *model) applyFilter() {
 	m.cursor = 0
 }
 
-type commandFinishedMsg struct {
-	err error
-}
+func runTarget(name string) error {
+	cmd := exec.Command("make", name)
 
-func runTarget(name string) tea.Cmd {
-	return func() tea.Msg {
-		cmd := exec.Command("make", name)
+	cmd.Stdin = os.Stdin
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
 
-		cmd.Stdin = os.Stdin
-		cmd.Stdout = os.Stdout
-		cmd.Stderr = os.Stderr
-
-		err := cmd.Run()
-
-		return commandFinishedMsg{err: err}
-	}
+	return cmd.Run()
 }
 
 func (m model) View() string {
@@ -291,15 +286,6 @@ func (m model) View() string {
 			"ctrl+k/ctrl+j navigate   type search   ctrl+u clear   enter run   esc quit",
 		),
 	)
-
-	if m.err != nil {
-		b.WriteString("\n")
-		b.WriteString(
-			lipgloss.NewStyle().
-				Foreground(lipgloss.Color("1")).
-				Render("command failed: " + m.err.Error()),
-		)
-	}
 
 	return b.String()
 }
