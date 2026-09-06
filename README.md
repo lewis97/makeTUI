@@ -26,6 +26,14 @@ Then run it from a directory containing a `Makefile`:
 The program exits before it runs the selected command, so its output appears in
 your regular terminal.
 
+### zshrc update
+
+To run via an alias:
+
+```
+alias mk="<PATH TO DIST BINARY>"
+```
+
 ## Controls
 
 | Key | Action |
